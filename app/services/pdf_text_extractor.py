@@ -2,7 +2,10 @@ from typing import BinaryIO
 
 from pypdf import PdfReader
 
-from app.services.document_text_extractor import DocumentTextExtractor
+from app.services.document_text_extractor import (
+    DocumentTextExtractor,
+    PageText,
+)
 
 
 class PdfTextExtractor(DocumentTextExtractor):
@@ -10,11 +13,19 @@ class PdfTextExtractor(DocumentTextExtractor):
     def extract(
         self,
         file: BinaryIO,
-    ) -> tuple[str, int]:
+    ) -> list[PageText]:
         reader = PdfReader(file)
 
-        pages = reader.pages
+        pages = []
 
-        text = "\n".join(page.extract_text() or "" for page in pages)
+        for page_number, page in enumerate(reader.pages, start=1):
+            content = page.extract_text() or ""
 
-        return text, len(pages)
+            pages.append(
+                PageText(
+                    page_number=page_number,
+                    content=content,
+                )
+            )
+
+        return pages

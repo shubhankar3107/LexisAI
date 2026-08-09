@@ -18,6 +18,25 @@ class DocumentChunkRepository:
         self._session.add(chunk)
         return chunk
 
+    def list_by_document_id(
+        self,
+        document_id: uuid.UUID,
+    ) -> list[DocumentChunk]:
+        """Return all chunks belonging to a document in chunk order."""
+        statement = (
+            select(DocumentChunk)
+            .where(
+                DocumentChunk.document_id == document_id,
+            )
+            .order_by(
+                DocumentChunk.chunk_index.asc(),
+            )
+        )
+
+        result = self._session.execute(statement)
+
+        return result.scalars().all()
+
     def delete_by_document_id(
         self,
         document_id: uuid.UUID,

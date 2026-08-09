@@ -29,6 +29,11 @@ class DocumentChunk(Base):
         index=True,
     )
 
+    page_number: Mapped[int] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
     chunk_index: Mapped[int] = mapped_column(
         Integer,
         nullable=False,

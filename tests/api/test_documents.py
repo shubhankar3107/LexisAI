@@ -5,10 +5,13 @@ from io import BytesIO
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_document_service
+from app.api.dependencies import (
+    get_document_processing_service,
+    get_document_service,
+)
 from app.enums.document_status import DocumentStatus
 from app.main import app
-from app.services.exceptions import DocumentNotFoundError
+from app.services.exceptions import DocumentNotFoundError, DocumentProcessingStateError
 
 
 class FakeDocumentAsset:
@@ -369,3 +372,147 @@ def test_download_document_requires_organization_id(client, document):
     )
 
     assert response.status_code == 422
+
+
+def test_process_document(client, document):
+    class FakeDocumentProcessingService:
+        def process_document(
+            self,
+            document_id,
+            organization_id,
+        ):
+            assert document_id == document.id
+            assert organization_id == document.organization_id
+
+            document.status = DocumentStatus.READY
+
+            return document
+
+    app.dependency_overrides[
+        get_document_processing_service
+    ] = lambda: FakeDocumentProcessingService()
+
+    try:
+        response = client.post(
+            f"/documents/{document.id}/process",
+            headers=organization_headers(document),
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["document_id"] == str(document.id)
+        assert data["status"] == "READY"
+
+    finally:
+        app.dependency_overrides.pop(
+            get_document_processing_service,
+            None,
+        )
+
+
+def test_process_document_not_found(client, document):
+    class FakeDocumentProcessingService:
+        def process_document(
+            self,
+            document_id,
+            organization_id,
+        ):
+            raise DocumentNotFoundError(
+                f"Document {document_id} not found",
+            )
+
+    app.dependency_overrides[
+        get_document_processing_service
+    ] = lambda: FakeDocumentProcessingService()
+
+    try:
+        response = client.post(
+            f"/documents/{uuid.uuid4()}/process",
+            headers=organization_headers(document),
+        )
+
+        assert response.status_code == 404
+
+        data = response.json()
+
+        assert data["detail"] == "Document not found"
+
+    finally:
+        app.dependency_overrides.pop(
+            get_document_processing_service,
+            None,
+        )
+
+
+def test_process_document_conflict(client, document):
+    class FakeDocumentProcessingService:
+        def process_document(
+            self,
+            document_id,
+            organization_id,
+        ):
+            raise DocumentProcessingStateError(
+                f"Document {document_id} is already processing",
+            )
+
+    app.dependency_overrides[
+        get_document_processing_service
+    ] = lambda: FakeDocumentProcessingService()
+
+    try:
+        response = client.post(
+            f"/documents/{document.id}/process",
+            headers=organization_headers(document),
+        )
+
+        assert response.status_code == 409
+
+        data = response.json()
+
+        assert data["detail"] == (
+            f"Document {document.id} is already processing"
+        )
+
+    finally:
+        app.dependency_overrides.pop(
+            get_document_processing_service,
+            None,
+        )
+
+
+def test_process_document_wrong_organization(client, document):
+    class FakeDocumentProcessingService:
+        def process_document(
+            self,
+            document_id,
+            organization_id,
+        ):
+            raise DocumentNotFoundError(
+                f"Document {document_id} not found",
+            )
+
+    app.dependency_overrides[
+        get_document_processing_service
+    ] = lambda: FakeDocumentProcessingService()
+
+    try:
+        response = client.post(
+            f"/documents/{document.id}/process",
+            headers={
+                "X-Organization-ID": str(uuid.uuid4()),
+            },
+        )
+
+        assert response.status_code == 404
+
+        data = response.json()
+
+        assert data["detail"] == "Document not found"
+
+    finally:
+        app.dependency_overrides.pop(
+            get_document_processing_service,
+            None,
+        )

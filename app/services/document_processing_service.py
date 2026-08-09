@@ -7,7 +7,10 @@ from app.models.document_content import DocumentContent
 from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.services.document_chunker import DocumentChunker
-from app.services.document_text_extractor import DocumentTextExtractor
+from app.services.document_text_extractor import (
+    DocumentTextExtractor,
+    PageText,
+)
 from app.services.exceptions import (
     DocumentNotFoundError,
     DocumentProcessingStateError,
@@ -77,11 +80,18 @@ class DocumentProcessingService:
             )
 
             try:
-                content, page_count = self._text_extractor.extract(
+                pages = self._text_extractor.extract(
                     file,
                 )
             finally:
                 file.close()
+
+            content = "\n".join(
+                page.content
+                for page in pages
+            )
+
+            page_count = len(pages)
 
             if document.content is not None:
                 document.content.content = content
@@ -97,16 +107,21 @@ class DocumentProcessingService:
                 document.id,
             )
 
-            chunks = self._chunker.chunk(content)
+            chunk_index = 0
 
-            for chunk in chunks:
-                self._document_chunk_repository.add(
-                    DocumentChunk(
-                        document_id=document.id,
-                        chunk_index=chunk.chunk_index,
-                        content=chunk.content,
+            for page in pages:
+                chunks = self._chunker.chunk(page.content)
+
+                for chunk in chunks:
+                    self._document_chunk_repository.add(
+                        DocumentChunk(
+                            document_id=document.id,
+                            page_number=page.page_number,
+                            chunk_index=chunk_index,
+                            content=chunk.content,
+                        )
                     )
-                )
+                    chunk_index += 1
 
             document.status = DocumentStatus.READY
 
