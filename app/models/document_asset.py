@@ -19,7 +19,10 @@ class DocumentAsset(Base):
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, unique=True
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
 
     original_filename: Mapped[str] = mapped_column(Text, nullable=False)
@@ -33,11 +36,14 @@ class DocumentAsset(Base):
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False, server_default=func.now()
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    storage_path: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
     )
 
     document: Mapped["Document"] = relationship(
-    back_populates="asset",
+        back_populates="asset",
     )
-    

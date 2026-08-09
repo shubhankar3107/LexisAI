@@ -7,6 +7,10 @@ __pycache__/
 # Environment Variables
 .env
 .env.*
+!.env.example
+
+# Runtime / User Data
+uploads/
 
 # Operating System & IDE
 .DS_Store

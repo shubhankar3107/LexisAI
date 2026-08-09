@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,7 +11,7 @@ class Settings(BaseSettings):
 
     database_url: str = Field(alias="DATABASE_URL")
 
-    upload_directory: str = Field(alias="UPLOAD_DIRECTORY")
+    upload_directory: Path = Field(alias="UPLOAD_DIRECTORY")
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -11,7 +11,6 @@ from app.db.base import Base
 from app.enums.document_status import DocumentStatus
 
 
-
 class Document(Base):
     __tablename__ = "documents"
 
@@ -29,10 +28,9 @@ class Document(Base):
         nullable=False,
         default=DocumentStatus.UPLOADED,
     )
-    
+
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False, server_default=func.now()
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -56,4 +54,10 @@ class Document(Base):
         back_populates="document",
         uselist=False,
         cascade="all, delete-orphan",
+    )
+
+    chunks: Mapped[list["DocumentChunk"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="DocumentChunk.chunk_index",
     )
