@@ -2,17 +2,17 @@ import uuid
 
 from app.enums.document_status import DocumentStatus
 from app.models.document import Document
+from app.models.document_chunk import DocumentChunk
 from app.models.document_content import DocumentContent
+from app.repositories.document_chunk_repository import DocumentChunkRepository
 from app.repositories.document_repository import DocumentRepository
+from app.services.document_chunker import DocumentChunker
 from app.services.document_text_extractor import DocumentTextExtractor
 from app.services.exceptions import (
     DocumentNotFoundError,
     DocumentProcessingStateError,
 )
 from app.storage.file_storage import FileStorage
-from app.repositories.document_chunk_repository import DocumentChunkRepository
-from app.services.document_chunker import DocumentChunker
-from app.models.document_chunk import DocumentChunk
 
 
 class DocumentProcessingService:
@@ -36,9 +36,11 @@ class DocumentProcessingService:
     def process_document(
         self,
         document_id: uuid.UUID,
+        organization_id: uuid.UUID,
     ) -> Document:
         document = self._document_repository.get_by_id(
             document_id,
+            organization_id=organization_id,
         )
 
         if document is None:

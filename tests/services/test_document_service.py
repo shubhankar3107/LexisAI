@@ -15,11 +15,21 @@ class FakeDocumentRepository:
     def __init__(self, document=None):
         self.document = document
 
-    def get_by_id(self, document_id):
+    def get_by_id(
+        self,
+        document_id,
+        organization_id=None,
+    ):
         if self.document is None:
             return None
 
         if self.document.id != document_id:
+            return None
+
+        if (
+            organization_id is not None
+            and self.document.organization_id != organization_id
+        ):
             return None
 
         if self.document.deleted_at is not None:
@@ -38,11 +48,37 @@ class FakeListRepository(FakeDocumentRepository):
         super().__init__()
         self.documents = documents
 
-    def list(self, limit=50, offset=0):
-        return self.documents[offset : offset + limit]
+    def list(
+        self,
+        organization_id=None,
+        limit=50,
+        offset=0,
+    ):
+        documents = self.documents
 
-    def count(self):
-        return len(self.documents)
+        if organization_id is not None:
+            documents = [
+                document
+                for document in documents
+                if document.organization_id == organization_id
+            ]
+
+        return documents[offset : offset + limit]
+
+    def count(
+        self,
+        organization_id=None,
+    ):
+        documents = self.documents
+
+        if organization_id is not None:
+            documents = [
+                document
+                for document in documents
+                if document.organization_id == organization_id
+            ]
+
+        return len(documents)
 
 
 class FakeFileStorage(FileStorage):
@@ -73,9 +109,11 @@ class FakeUnitOfWork:
 
 def test_get_document_returns_document():
     document_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
 
     document = Document(
         id=document_id,
+        organization_id=organization_id,
         title="Contract",
     )
 
@@ -89,7 +127,10 @@ def test_get_document_returns_document():
         file_storage,
     )
 
-    result = service.get_document(document_id)
+    result = service.get_document(
+        document_id,
+        organization_id,
+    )
 
     assert result is document
     assert result.id == document_id
@@ -108,16 +149,23 @@ def test_get_document_raises_when_not_found():
     )
 
     document_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
 
     with pytest.raises(DocumentNotFoundError):
-        service.get_document(document_id)
+        service.get_document(
+            document_id,
+            organization_id,
+        )
 
 
-def test_delete_document():
+def test_get_document_raises_for_wrong_organization():
     document_id = uuid.uuid4()
+    document_organization_id = uuid.uuid4()
+    requesting_organization_id = uuid.uuid4()
 
     document = Document(
         id=document_id,
+        organization_id=document_organization_id,
         title="Contract",
     )
 
@@ -131,7 +179,37 @@ def test_delete_document():
         file_storage,
     )
 
-    service.delete_document(document_id)
+    with pytest.raises(DocumentNotFoundError):
+        service.get_document(
+            document_id,
+            requesting_organization_id,
+        )
+
+
+def test_delete_document():
+    document_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+
+    document = Document(
+        id=document_id,
+        organization_id=organization_id,
+        title="Contract",
+    )
+
+    repository = FakeDocumentRepository(document)
+    unit_of_work = FakeUnitOfWork()
+    file_storage = FakeFileStorage()
+
+    service = DocumentService(
+        repository,
+        unit_of_work,
+        file_storage,
+    )
+
+    service.delete_document(
+        document_id,
+        organization_id,
+    )
 
     assert document.deleted_at is not None
     assert unit_of_work.commit_called is True
@@ -150,22 +228,61 @@ def test_delete_document_raises_when_not_found():
     )
 
     document_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
 
     with pytest.raises(DocumentNotFoundError):
-        service.delete_document(document_id)
+        service.delete_document(
+            document_id,
+            organization_id,
+        )
 
     assert unit_of_work.commit_called is False
     assert unit_of_work.rollback_called is False
 
 
+def test_delete_document_raises_for_wrong_organization():
+    document_id = uuid.uuid4()
+    document_organization_id = uuid.uuid4()
+    requesting_organization_id = uuid.uuid4()
+
+    document = Document(
+        id=document_id,
+        organization_id=document_organization_id,
+        title="Contract",
+    )
+
+    repository = FakeDocumentRepository(document)
+    unit_of_work = FakeUnitOfWork()
+    file_storage = FakeFileStorage()
+
+    service = DocumentService(
+        repository,
+        unit_of_work,
+        file_storage,
+    )
+
+    with pytest.raises(DocumentNotFoundError):
+        service.delete_document(
+            document_id,
+            requesting_organization_id,
+        )
+
+    assert document.deleted_at is None
+    assert unit_of_work.commit_called is False
+
+
 def test_list_documents():
+    organization_id = uuid.uuid4()
+
     document_one = Document(
         id=uuid.uuid4(),
+        organization_id=organization_id,
         title="Contract",
     )
 
     document_two = Document(
         id=uuid.uuid4(),
+        organization_id=organization_id,
         title="Roadmap",
     )
 
@@ -185,7 +302,9 @@ def test_list_documents():
         file_storage,
     )
 
-    documents, total = service.list_documents()
+    documents, total = service.list_documents(
+        organization_id,
+    )
 
     assert documents == [
         document_one,
@@ -195,11 +314,53 @@ def test_list_documents():
     assert total == 2
 
 
+def test_list_documents_only_returns_organization_documents():
+    organization_id = uuid.uuid4()
+    other_organization_id = uuid.uuid4()
+
+    document_one = Document(
+        id=uuid.uuid4(),
+        organization_id=organization_id,
+        title="Contract",
+    )
+
+    document_two = Document(
+        id=uuid.uuid4(),
+        organization_id=other_organization_id,
+        title="Secret",
+    )
+
+    repository = FakeListRepository(
+        [
+            document_one,
+            document_two,
+        ],
+    )
+
+    unit_of_work = FakeUnitOfWork()
+    file_storage = FakeFileStorage()
+
+    service = DocumentService(
+        repository,
+        unit_of_work,
+        file_storage,
+    )
+
+    documents, total = service.list_documents(
+        organization_id,
+    )
+
+    assert documents == [document_one]
+    assert total == 1
+
+
 def test_download_document():
     document_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
 
     document = Document(
         id=document_id,
+        organization_id=organization_id,
         title="Contract",
     )
 
@@ -231,6 +392,7 @@ def test_download_document():
 
     result_document, result_file = service.download_document(
         document_id,
+        organization_id,
     )
 
     assert result_document is document
@@ -250,16 +412,23 @@ def test_download_document_raises_when_not_found():
     )
 
     document_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
 
     with pytest.raises(DocumentNotFoundError):
-        service.download_document(document_id)
+        service.download_document(
+            document_id,
+            organization_id,
+        )
 
 
-def test_get_document_raises_after_soft_delete():
+def test_download_document_raises_for_wrong_organization():
     document_id = uuid.uuid4()
+    document_organization_id = uuid.uuid4()
+    requesting_organization_id = uuid.uuid4()
 
     document = Document(
         id=document_id,
+        organization_id=document_organization_id,
         title="Contract",
     )
 
@@ -273,17 +442,52 @@ def test_get_document_raises_after_soft_delete():
         file_storage,
     )
 
-    service.delete_document(document_id)
+    with pytest.raises(DocumentNotFoundError):
+        service.download_document(
+            document_id,
+            requesting_organization_id,
+        )
+
+
+def test_get_document_raises_after_soft_delete():
+    document_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+
+    document = Document(
+        id=document_id,
+        organization_id=organization_id,
+        title="Contract",
+    )
+
+    repository = FakeDocumentRepository(document)
+    unit_of_work = FakeUnitOfWork()
+    file_storage = FakeFileStorage()
+
+    service = DocumentService(
+        repository,
+        unit_of_work,
+        file_storage,
+    )
+
+    service.delete_document(
+        document_id,
+        organization_id,
+    )
 
     with pytest.raises(DocumentNotFoundError):
-        service.get_document(document_id)
+        service.get_document(
+            document_id,
+            organization_id,
+        )
 
 
 def test_download_document_raises_after_soft_delete():
     document_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
 
     document = Document(
         id=document_id,
+        organization_id=organization_id,
         title="Contract",
     )
 
@@ -303,13 +507,23 @@ def test_download_document_raises_after_soft_delete():
     unit_of_work = FakeUnitOfWork()
     file_storage = FakeFileStorage()
 
+    file = BytesIO(b"PDF content")
+
+    file_storage.read_files[asset.storage_path] = file
+
     service = DocumentService(
         repository,
         unit_of_work,
         file_storage,
     )
 
-    service.delete_document(document_id)
+    service.delete_document(
+        document_id,
+        organization_id,
+    )
 
     with pytest.raises(DocumentNotFoundError):
-        service.download_document(document_id)
+        service.download_document(
+            document_id,
+            organization_id,
+        )

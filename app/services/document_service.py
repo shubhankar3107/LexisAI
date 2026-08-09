@@ -22,9 +22,11 @@ class DocumentService:
     def get_document(
         self,
         document_id: uuid.UUID,
+        organization_id: uuid.UUID,
     ) -> Document:
         document = self._document_repository.get_by_id(
             document_id,
+            organization_id=organization_id,
         )
 
         if document is None:
@@ -37,9 +39,11 @@ class DocumentService:
     def delete_document(
         self,
         document_id: uuid.UUID,
+        organization_id: uuid.UUID,
     ) -> None:
         document = self._document_repository.get_by_id(
             document_id,
+            organization_id=organization_id,
         )
 
         if document is None:
@@ -53,24 +57,30 @@ class DocumentService:
 
     def list_documents(
         self,
+        organization_id: uuid.UUID,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Document], int]:
         documents = self._document_repository.list(
+            organization_id=organization_id,
             limit=limit,
             offset=offset,
         )
 
-        total = self._document_repository.count()
+        total = self._document_repository.count(
+            organization_id=organization_id,
+        )
 
         return documents, total
 
     def download_document(
         self,
         document_id: uuid.UUID,
+        organization_id: uuid.UUID,
     ) -> tuple[Document, BinaryIO]:
         document = self._document_repository.get_by_id(
             document_id,
+            organization_id=organization_id,
         )
 
         if document is None:

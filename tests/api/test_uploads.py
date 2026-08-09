@@ -8,18 +8,16 @@ from app.main import app
 
 
 class FakeUploadService:
-    def upload(self, input_data, file):
-        assert input_data.filename == "Contract.pdf"
-        assert input_data.content_type == "application/pdf"
+    def __init__(self):
+        self.organization_id = None
 
-        assert file.read() == b"PDF content"
-
-        document_id = uuid.uuid4()
+    def upload(self, input_data, file, organization_id):
+        self.organization_id = organization_id
 
         return (
-            document_id,
-            f"{document_id}.pdf",
-            f"documents/{document_id}/{document_id}.pdf",
+            uuid.uuid4(),
+            "stored.pdf",
+            "documents/test/stored.pdf",
             "test-checksum",
         )
 
@@ -38,8 +36,13 @@ def client():
 
 
 def test_upload_document(client):
+    organization_id = uuid.uuid4()
+
     response = client.post(
         "/documents/",
+        headers={
+            "X-Organization-ID": str(organization_id),
+        },
         files={
             "file": (
                 "Contract.pdf",

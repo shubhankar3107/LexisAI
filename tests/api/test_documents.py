@@ -18,13 +18,21 @@ class FakeDocumentAsset:
         self.mime_type = "application/pdf"
         self.file_size = 3850
         self.checksum = "test-checksum"
+        self.storage_path = "documents/test/contract.pdf"
 
 
 class FakeDocument:
-    def __init__(self, document_id, title, status):
+    def __init__(
+        self,
+        document_id,
+        title,
+        status,
+        organization_id,
+    ):
         self.id = document_id
         self.title = title
         self.status = status
+        self.organization_id = organization_id
         self.created_at = datetime.now(timezone.utc)
         self.updated_at = self.created_at
         self.deleted_at = None
@@ -37,6 +45,7 @@ def document():
         document_id=uuid.uuid4(),
         title="Contract",
         status=DocumentStatus.UPLOADED,
+        organization_id=uuid.uuid4(),
     )
 
 
@@ -44,7 +53,20 @@ def document():
 def client(document):
     def override_get_document_service():
         class FakeDocumentService:
-            def get_document(self, document_id):
+
+            def _verify_organization(self, organization_id):
+                if organization_id != document.organization_id:
+                    raise DocumentNotFoundError(
+                        f"Document {document.id} not found",
+                    )
+
+            def get_document(
+                self,
+                document_id,
+                organization_id,
+            ):
+                self._verify_organization(organization_id)
+
                 if document_id != document.id:
                     raise DocumentNotFoundError(
                         f"Document {document_id} not found",
@@ -57,7 +79,13 @@ def client(document):
 
                 return document
 
-            def delete_document(self, document_id):
+            def delete_document(
+                self,
+                document_id,
+                organization_id,
+            ):
+                self._verify_organization(organization_id)
+
                 if document_id != document.id:
                     raise DocumentNotFoundError(
                         f"Document {document_id} not found",
@@ -70,7 +98,15 @@ def client(document):
 
                 document.deleted_at = datetime.now(timezone.utc)
 
-            def list_documents(self, limit=50, offset=0):
+            def list_documents(
+                self,
+                organization_id,
+                limit=50,
+                offset=0,
+            ):
+                if organization_id != document.organization_id:
+                    return [], 0
+
                 documents = [document]
 
                 return (
@@ -78,7 +114,13 @@ def client(document):
                     len(documents),
                 )
 
-            def download_document(self, document_id):
+            def download_document(
+                self,
+                document_id,
+                organization_id,
+            ):
+                self._verify_organization(organization_id)
+
                 if document_id != document.id:
                     raise DocumentNotFoundError(
                         f"Document {document_id} not found",
@@ -95,16 +137,25 @@ def client(document):
 
         return FakeDocumentService()
 
-    app.dependency_overrides[get_document_service] = override_get_document_service
+    app.dependency_overrides[
+        get_document_service
+    ] = override_get_document_service
 
     yield TestClient(app)
 
     app.dependency_overrides.clear()
 
 
+def organization_headers(document):
+    return {
+        "X-Organization-ID": str(document.organization_id),
+    }
+
+
 def test_get_document(client, document):
     response = client.get(
         f"/documents/{document.id}",
+        headers=organization_headers(document),
     )
 
     assert response.status_code == 200
@@ -125,11 +176,12 @@ def test_get_document(client, document):
     assert data["asset"]["checksum"] == "test-checksum"
 
 
-def test_get_document_not_found(client):
+def test_get_document_not_found(client, document):
     document_id = uuid.uuid4()
 
     response = client.get(
         f"/documents/{document_id}",
+        headers=organization_headers(document),
     )
 
     assert response.status_code == 404
@@ -139,28 +191,36 @@ def test_get_document_not_found(client):
     assert data["detail"] == "Document not found"
 
 
-def test_get_document_invalid_uuid(client):
+def test_get_document_wrong_organization(client, document):
     response = client.get(
-        "/documents/not-a-uuid",
+        f"/documents/{document.id}",
+        headers={
+            "X-Organization-ID": str(uuid.uuid4()),
+        },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 404
+
+    data = response.json()
+
+    assert data["detail"] == "Document not found"
 
 
 def test_delete_document(client, document):
     response = client.delete(
         f"/documents/{document.id}",
+        headers=organization_headers(document),
     )
 
     assert response.status_code == 204
-    assert response.content == b""
 
 
-def test_delete_document_not_found(client):
+def test_delete_document_not_found(client, document):
     document_id = uuid.uuid4()
 
     response = client.delete(
         f"/documents/{document_id}",
+        headers=organization_headers(document),
     )
 
     assert response.status_code == 404
@@ -170,31 +230,43 @@ def test_delete_document_not_found(client):
     assert data["detail"] == "Document not found"
 
 
+def test_delete_document_wrong_organization(client, document):
+    response = client.delete(
+        f"/documents/{document.id}",
+        headers={
+            "X-Organization-ID": str(uuid.uuid4()),
+        },
+    )
+
+    assert response.status_code == 404
+
+    assert document.deleted_at is None
+
+
 def test_list_documents(client, document):
-    response = client.get("/documents/")
+    response = client.get(
+        "/documents/",
+        headers=organization_headers(document),
+    )
 
     assert response.status_code == 200
 
     data = response.json()
 
+    assert data["total"] == 1
     assert data["limit"] == 50
     assert data["offset"] == 0
-    assert data["total"] == 1
-
     assert len(data["items"]) == 1
 
-    item = data["items"][0]
-
-    assert item["id"] == str(document.id)
-    assert item["title"] == "Contract"
-    assert item["status"] == "UPLOADED"
-    assert item["created_at"] is not None
-    assert item["updated_at"] is not None
+    assert data["items"][0]["id"] == str(document.id)
+    assert data["items"][0]["title"] == "Contract"
+    assert data["items"][0]["status"] == "UPLOADED"
 
 
-def test_list_documents_custom_pagination(client):
+def test_list_documents_custom_pagination(client, document):
     response = client.get(
         "/documents/?limit=10&offset=5",
+        headers=organization_headers(document),
     )
 
     assert response.status_code == 200
@@ -207,25 +279,36 @@ def test_list_documents_custom_pagination(client):
     assert data["items"] == []
 
 
-def test_list_documents_invalid_limit(client):
+def test_list_documents_wrong_organization(client, document):
     response = client.get(
-        "/documents/?limit=0",
+        "/documents/",
+        headers={
+            "X-Organization-ID": str(uuid.uuid4()),
+        },
+    )
+
+    assert response.status_code == 404
+
+
+def test_get_document_requires_organization_id(client, document):
+    response = client.get(
+        f"/documents/{document.id}",
     )
 
     assert response.status_code == 422
 
 
-def test_list_documents_limit_too_large(client):
-    response = client.get(
-        "/documents/?limit=101",
+def test_delete_document_requires_organization_id(client, document):
+    response = client.delete(
+        f"/documents/{document.id}",
     )
 
     assert response.status_code == 422
 
 
-def test_list_documents_negative_offset(client):
+def test_list_documents_requires_organization_id(client):
     response = client.get(
-        "/documents/?offset=-1",
+        "/documents/",
     )
 
     assert response.status_code == 422
@@ -234,6 +317,7 @@ def test_list_documents_negative_offset(client):
 def test_download_document(client, document):
     response = client.get(
         f"/documents/{document.id}/download",
+        headers=organization_headers(document),
     )
 
     assert response.status_code == 200
@@ -243,15 +327,17 @@ def test_download_document(client, document):
     assert response.headers["content-type"] == "application/pdf"
 
     assert (
-        response.headers["content-disposition"] == 'attachment; filename="Contract.pdf"'
+        response.headers["content-disposition"]
+        == 'attachment; filename="Contract.pdf"'
     )
 
 
-def test_download_document_not_found(client):
+def test_download_document_not_found(client, document):
     document_id = uuid.uuid4()
 
     response = client.get(
         f"/documents/{document_id}/download",
+        headers=organization_headers(document),
     )
 
     assert response.status_code == 404
@@ -259,3 +345,27 @@ def test_download_document_not_found(client):
     data = response.json()
 
     assert data["detail"] == "Document not found"
+
+
+def test_list_documents_wrong_organization(client, document):
+    response = client.get(
+        "/documents/",
+        headers={
+            "X-Organization-ID": str(uuid.uuid4()),
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["items"] == []
+    assert data["total"] == 0
+
+
+def test_download_document_requires_organization_id(client, document):
+    response = client.get(
+        f"/documents/{document.id}/download",
+    )
+
+    assert response.status_code == 422

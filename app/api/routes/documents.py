@@ -3,14 +3,18 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
-from app.api.dependencies import get_document_service, get_document_processing_service
-from app.services.document_service import DocumentService
-from app.services.exceptions import (
-    DocumentNotFoundError,
-    DocumentFileNotFoundError,
-    DocumentProcessingStateError,
+from app.api.dependencies import (
+    get_current_organization_id,
+    get_document_processing_service,
+    get_document_service,
 )
 from app.services.document_processing_service import DocumentProcessingService
+from app.services.document_service import DocumentService
+from app.services.exceptions import (
+    DocumentFileNotFoundError,
+    DocumentNotFoundError,
+    DocumentProcessingStateError,
+)
 from app.services.schemas.document import (
     DocumentAssetResponse,
     DocumentListItemResponse,
@@ -31,10 +35,16 @@ router = APIRouter(
 )
 def get_document(
     document_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(
+        get_current_organization_id,
+    ),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
-        document = service.get_document(document_id)
+        document = service.get_document(
+            document_id,
+            organization_id,
+        )
     except DocumentNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -63,10 +73,16 @@ def get_document(
 )
 def delete_document(
     document_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(
+        get_current_organization_id,
+    ),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
-        service.delete_document(document_id)
+        service.delete_document(
+            document_id,
+            organization_id,
+        )
     except DocumentNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -88,9 +104,13 @@ def list_documents(
         default=0,
         ge=0,
     ),
+    organization_id: uuid.UUID = Depends(
+        get_current_organization_id,
+    ),
     service: DocumentService = Depends(get_document_service),
 ):
     documents, total = service.list_documents(
+        organization_id,
         limit=limit,
         offset=offset,
     )
@@ -117,6 +137,9 @@ def list_documents(
 )
 def process_document(
     document_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(
+        get_current_organization_id,
+    ),
     service: DocumentProcessingService = Depends(
         get_document_processing_service,
     ),
@@ -124,6 +147,7 @@ def process_document(
     try:
         document = service.process_document(
             document_id,
+            organization_id,
         )
 
     except DocumentNotFoundError as exc:
@@ -149,11 +173,15 @@ def process_document(
 )
 def download_document(
     document_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(
+        get_current_organization_id,
+    ),
     service: DocumentService = Depends(get_document_service),
 ):
     try:
         document, file = service.download_document(
             document_id,
+            organization_id,
         )
     except DocumentNotFoundError as exc:
         raise HTTPException(

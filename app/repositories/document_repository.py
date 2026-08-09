@@ -22,11 +22,17 @@ class DocumentRepository:
     def get_by_id(
         self,
         document_id: uuid.UUID,
+        organization_id: uuid.UUID | None = None,
     ) -> Document | None:
         statement = select(Document).where(
             Document.id == document_id,
             Document.deleted_at.is_(None),
         )
+
+        if organization_id is not None:
+            statement = statement.where(
+                Document.organization_id == organization_id,
+            )
 
         result = self._session.execute(statement)
 
@@ -35,11 +41,17 @@ class DocumentRepository:
     def list_by_title(
         self,
         title: str,
+        organization_id: uuid.UUID | None = None,
     ) -> list[Document]:
         statement = select(Document).where(
             Document.title == title,
             Document.deleted_at.is_(None),
         )
+
+        if organization_id is not None:
+            statement = statement.where(
+                Document.organization_id == organization_id,
+            )
 
         result = self._session.execute(statement)
 
@@ -47,12 +59,22 @@ class DocumentRepository:
 
     def list(
         self,
+        organization_id: uuid.UUID | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Document]:
         statement = (
             select(Document)
             .where(Document.deleted_at.is_(None))
+        )
+
+        if organization_id is not None:
+            statement = statement.where(
+                Document.organization_id == organization_id,
+            )
+
+        statement = (
+            statement
             .limit(limit)
             .offset(offset)
         )
@@ -61,12 +83,20 @@ class DocumentRepository:
 
         return result.scalars().all()
 
-    def count(self) -> int:
+    def count(
+        self,
+        organization_id: uuid.UUID | None = None,
+    ) -> int:
         statement = (
             select(func.count())
             .select_from(Document)
             .where(Document.deleted_at.is_(None))
         )
+
+        if organization_id is not None:
+            statement = statement.where(
+                Document.organization_id == organization_id,
+            )
 
         result = self._session.execute(statement)
 

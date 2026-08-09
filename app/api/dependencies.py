@@ -1,4 +1,6 @@
-from fastapi import Depends
+import uuid
+
+from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -17,6 +19,21 @@ from app.services.document_chunker import DocumentChunker
 
 from app.storage.local_file_storage import LocalFileStorage
 from app.storage.storage_path import StoragePathBuilder
+
+
+def get_current_organization_id(
+    x_organization_id: str = Header(
+        ...,
+        alias="X-Organization-ID",
+    ),
+) -> uuid.UUID:
+    try:
+        return uuid.UUID(x_organization_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid organization ID",
+        ) from exc
 
 
 def get_upload_service(

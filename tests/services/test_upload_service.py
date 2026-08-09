@@ -52,6 +52,7 @@ class FakeUnitOfWork:
 
 
 def test_upload_saves_file():
+    organization_id = uuid.uuid4()
     file_storage = FakeFileStorage()
     checksum_calculator = FakeChecksumCalculator()
     document_repository = FakeDocumentRepository()
@@ -76,6 +77,7 @@ def test_upload_saves_file():
     document_id, stored_filename, storage_path, checksum = service.upload(
         input_data,
         file,
+        organization_id=organization_id,
     )
 
     assert isinstance(document_id, uuid.UUID)
@@ -100,6 +102,7 @@ def test_upload_saves_file():
     document = document_repository.documents[0]
 
     assert document.id == document_id
+    assert document.organization_id == organization_id
     assert document.title == "Contract"
     assert document.status is DocumentStatus.UPLOADED
     assert document.asset is not None

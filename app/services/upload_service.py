@@ -32,6 +32,7 @@ class UploadService:
         self,
         input: UploadDocumentInput,
         file: BinaryIO,
+        organization_id: uuid.UUID,
     ) -> tuple[uuid.UUID, str, str, str]:
         document_id = uuid.uuid4()
 
@@ -55,9 +56,10 @@ class UploadService:
 
         document = Document(
             id=document_id,
+            organization_id=organization_id,
             title=title,
             status=DocumentStatus.UPLOADED,
-        )
+)
 
         asset = DocumentAsset(
             document_id=document_id,
