@@ -53,4 +53,8 @@ class Organization(Base):
         back_populates="organization",
         cascade="all, delete-orphan",
     )
-    
+
+    vector_indexes: Mapped[list["VectorIndex"]] = relationship(
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )

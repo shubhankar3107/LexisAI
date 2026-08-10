@@ -5,8 +5,10 @@ from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import (
     get_current_organization_id,
+    get_document_indexing_service,
     get_document_processing_service,
     get_document_service,
+    get_vector_index_service,
 )
 from app.services.document_processing_service import DocumentProcessingService
 from app.services.document_service import DocumentService
@@ -20,6 +22,15 @@ from app.services.schemas.document import (
     DocumentListItemResponse,
     DocumentListResponse,
     DocumentResponse,
+)
+
+from app.services.document_indexing_service import (
+    DocumentIndexingService,
+)
+from app.services.vector_index_service import (
+    IndexNotFoundError,
+    InvalidIndexTransitionError,
+    VectorIndexService,
 )
 
 
@@ -167,6 +178,87 @@ def process_document(
         "status": document.status,
     }
 
+@router.post(
+    "/{document_id}/index/{index_id}",
+)
+def index_document(
+    document_id: uuid.UUID,
+    index_id: uuid.UUID,
+    organization_id: uuid.UUID = Depends(
+        get_current_organization_id,
+    ),
+    indexing_service: DocumentIndexingService = Depends(
+        get_document_indexing_service,
+    ),
+    vector_index_service: VectorIndexService = Depends(
+        get_vector_index_service,
+    ),
+):
+    try:
+        vector_index_service.require_building_index(
+            index_id=index_id,
+            organization_id=organization_id,
+        )
+
+    except IndexNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Vector index not found",
+        ) from exc
+
+    except InvalidIndexTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        indexing_service.index_document(
+            document_id=document_id,
+            organization_id=organization_id,
+            index_id=index_id,
+        )
+
+    except DocumentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        ) from exc
+
+    except DocumentProcessingStateError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    except Exception:
+        try:
+            vector_index_service.mark_failed(
+                index_id=index_id,
+                organization_id=organization_id,
+            )
+        except Exception:
+            pass
+
+        raise
+
+    try:
+        vector_index = vector_index_service.mark_ready(
+            index_id=index_id,
+            organization_id=organization_id,
+        )
+
+    except InvalidIndexTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    return {
+        "document_id": document_id,
+        "index_id": index_id,
+        "status": vector_index.status,
+    }
 
 @router.get(
     "/{document_id}/download",

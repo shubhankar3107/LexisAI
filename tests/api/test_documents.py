@@ -6,12 +6,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import (
+    get_document_indexing_service,
     get_document_processing_service,
     get_document_service,
+    get_vector_index_service,
 )
 from app.enums.document_status import DocumentStatus
+from app.enums.vector_index_status import VectorIndexStatus
 from app.main import app
-from app.services.exceptions import DocumentNotFoundError, DocumentProcessingStateError
+from app.services.exceptions import (
+    DocumentNotFoundError,
+    DocumentProcessingStateError,
+)
+from app.services.vector_index_service import (
+    IndexNotFoundError,
+    InvalidIndexTransitionError,
+)
 
 
 class FakeDocumentAsset:
@@ -42,6 +52,18 @@ class FakeDocument:
         self.asset = FakeDocumentAsset()
 
 
+class FakeVectorIndex:
+    def __init__(
+        self,
+        index_id,
+        organization_id,
+        status=VectorIndexStatus.BUILDING,
+    ):
+        self.id = index_id
+        self.organization_id = organization_id
+        self.status = status
+
+
 @pytest.fixture
 def document():
     return FakeDocument(
@@ -53,11 +75,22 @@ def document():
 
 
 @pytest.fixture
-def client(document):
+def vector_index(document):
+    return FakeVectorIndex(
+        index_id=uuid.uuid4(),
+        organization_id=document.organization_id,
+    )
+
+
+@pytest.fixture
+def client(document, vector_index):
     def override_get_document_service():
         class FakeDocumentService:
 
-            def _verify_organization(self, organization_id):
+            def _verify_organization(
+                self,
+                organization_id,
+            ):
                 if organization_id != document.organization_id:
                     raise DocumentNotFoundError(
                         f"Document {document.id} not found",
@@ -68,7 +101,9 @@ def client(document):
                 document_id,
                 organization_id,
             ):
-                self._verify_organization(organization_id)
+                self._verify_organization(
+                    organization_id,
+                )
 
                 if document_id != document.id:
                     raise DocumentNotFoundError(
@@ -87,7 +122,9 @@ def client(document):
                 document_id,
                 organization_id,
             ):
-                self._verify_organization(organization_id)
+                self._verify_organization(
+                    organization_id,
+                )
 
                 if document_id != document.id:
                     raise DocumentNotFoundError(
@@ -99,7 +136,9 @@ def client(document):
                         f"Document {document_id} not found",
                     )
 
-                document.deleted_at = datetime.now(timezone.utc)
+                document.deleted_at = datetime.now(
+                    timezone.utc,
+                )
 
             def list_documents(
                 self,
@@ -122,7 +161,9 @@ def client(document):
                 document_id,
                 organization_id,
             ):
-                self._verify_organization(organization_id)
+                self._verify_organization(
+                    organization_id,
+                )
 
                 if document_id != document.id:
                     raise DocumentNotFoundError(
@@ -144,7 +185,155 @@ def client(document):
         get_document_service
     ] = override_get_document_service
 
-    yield TestClient(app)
+    class FakeDocumentIndexingService:
+        def __init__(self):
+            self.calls = []
+            self.error = None
+
+        def index_document(
+            self,
+            document_id,
+            organization_id,
+            index_id,
+        ):
+            self.calls.append(
+                (
+                    document_id,
+                    organization_id,
+                    index_id,
+                )
+            )
+
+            if self.error is not None:
+                raise self.error
+
+            if document_id != document.id:
+                raise DocumentNotFoundError(
+                    f"Document {document_id} not found",
+                )
+
+            if organization_id != document.organization_id:
+                raise DocumentNotFoundError(
+                    f"Document {document_id} not found",
+                )
+
+            return None
+
+    indexing_service = FakeDocumentIndexingService()
+
+    document.indexing_service = indexing_service
+
+    class FakeVectorIndexService:
+        def __init__(self):
+            self.mark_ready_calls = []
+            self.mark_failed_calls = []
+            self.mark_ready_error = None
+            self.mark_failed_error = None
+
+        def require_building_index(
+            self,
+            index_id,
+            organization_id,
+        ):
+            if (
+                index_id != vector_index.id
+                or organization_id != vector_index.organization_id
+            ):
+                raise IndexNotFoundError(
+                    f"Vector index {index_id} not found",
+                )
+
+            if vector_index.status != VectorIndexStatus.BUILDING:
+                raise InvalidIndexTransitionError(
+                    "Vector index must be in BUILDING state "
+                    "for indexing, but is "
+                    f"{vector_index.status.value}",
+                )
+
+            return vector_index
+
+        def mark_ready(
+            self,
+            index_id,
+            organization_id,
+        ):
+            self.mark_ready_calls.append(
+                (
+                    index_id,
+                    organization_id,
+                )
+            )
+
+            if self.mark_ready_error is not None:
+                raise self.mark_ready_error
+
+            if (
+                index_id != vector_index.id
+                or organization_id != vector_index.organization_id
+            ):
+                raise IndexNotFoundError(
+                    f"Vector index {index_id} not found",
+                )
+
+            if vector_index.status != VectorIndexStatus.BUILDING:
+                raise InvalidIndexTransitionError(
+                    "Invalid vector-index transition: "
+                    f"{vector_index.status.value} -> ready",
+                )
+
+            vector_index.status = VectorIndexStatus.READY
+
+            return vector_index
+
+        def mark_failed(
+            self,
+            index_id,
+            organization_id,
+        ):
+            self.mark_failed_calls.append(
+                (
+                    index_id,
+                    organization_id,
+                )
+            )
+
+            if self.mark_failed_error is not None:
+                raise self.mark_failed_error
+
+            if (
+                index_id != vector_index.id
+                or organization_id != vector_index.organization_id
+            ):
+                raise IndexNotFoundError(
+                    f"Vector index {index_id} not found",
+                )
+
+            if vector_index.status != VectorIndexStatus.BUILDING:
+                raise InvalidIndexTransitionError(
+                    "Invalid vector-index transition: "
+                    f"{vector_index.status.value} -> failed",
+                )
+
+            vector_index.status = VectorIndexStatus.FAILED
+
+            return vector_index
+
+    vector_index_service = FakeVectorIndexService()
+
+    document.vector_index_service = vector_index_service
+
+    app.dependency_overrides[
+        get_document_indexing_service
+    ] = lambda: indexing_service
+
+    app.dependency_overrides[
+        get_vector_index_service
+    ] = lambda: vector_index_service
+
+    yield TestClient(
+        app,
+        raise_server_exceptions=False,
+    )
 
     app.dependency_overrides.clear()
 
@@ -290,10 +479,18 @@ def test_list_documents_wrong_organization(client, document):
         },
     )
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["items"] == []
+    assert data["total"] == 0
 
 
-def test_get_document_requires_organization_id(client, document):
+def test_get_document_requires_organization_id(
+    client,
+    document,
+):
     response = client.get(
         f"/documents/{document.id}",
     )
@@ -301,7 +498,10 @@ def test_get_document_requires_organization_id(client, document):
     assert response.status_code == 422
 
 
-def test_delete_document_requires_organization_id(client, document):
+def test_delete_document_requires_organization_id(
+    client,
+    document,
+):
     response = client.delete(
         f"/documents/{document.id}",
     )
@@ -350,23 +550,10 @@ def test_download_document_not_found(client, document):
     assert data["detail"] == "Document not found"
 
 
-def test_list_documents_wrong_organization(client, document):
-    response = client.get(
-        "/documents/",
-        headers={
-            "X-Organization-ID": str(uuid.uuid4()),
-        },
-    )
-
-    assert response.status_code == 200
-
-    data = response.json()
-
-    assert data["items"] == []
-    assert data["total"] == 0
-
-
-def test_download_document_requires_organization_id(client, document):
+def test_download_document_requires_organization_id(
+    client,
+    document,
+):
     response = client.get(
         f"/documents/{document.id}/download",
     )
@@ -516,3 +703,242 @@ def test_process_document_wrong_organization(client, document):
             get_document_processing_service,
             None,
         )
+
+
+def test_index_document(
+    client,
+    document,
+    vector_index,
+):
+    document.status = DocumentStatus.READY
+
+    response = client.post(
+        f"/documents/{document.id}/index/{vector_index.id}",
+        headers=organization_headers(document),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["document_id"] == str(document.id)
+    assert data["index_id"] == str(vector_index.id)
+    assert data["status"] == "ready"
+
+    assert vector_index.status == VectorIndexStatus.READY
+
+    assert document.vector_index_service.mark_ready_calls == [
+        (
+            vector_index.id,
+            vector_index.organization_id,
+        )
+    ]
+
+    assert document.vector_index_service.mark_failed_calls == []
+
+
+def test_index_document_index_not_found(
+    client,
+    document,
+    vector_index,
+):
+    document.status = DocumentStatus.READY
+
+    missing_index_id = uuid.uuid4()
+
+    response = client.post(
+        f"/documents/{document.id}/index/{missing_index_id}",
+        headers=organization_headers(document),
+    )
+
+    assert response.status_code == 404
+
+    data = response.json()
+
+    assert data["detail"] == "Vector index not found"
+
+
+def test_index_document_wrong_organization(
+    client,
+    document,
+    vector_index,
+):
+    document.status = DocumentStatus.READY
+
+    response = client.post(
+        f"/documents/{document.id}/index/{vector_index.id}",
+        headers={
+            "X-Organization-ID": str(uuid.uuid4()),
+        },
+    )
+
+    assert response.status_code == 404
+
+    data = response.json()
+
+    assert data["detail"] == "Vector index not found"
+
+    assert vector_index.status == VectorIndexStatus.BUILDING
+
+
+def test_index_document_requires_organization_id(
+    client,
+    document,
+    vector_index,
+):
+    document.status = DocumentStatus.READY
+
+    response = client.post(
+        f"/documents/{document.id}/index/{vector_index.id}",
+    )
+
+    assert response.status_code == 422
+
+    assert vector_index.status == VectorIndexStatus.BUILDING
+
+
+def test_index_document_rejects_ready_index(
+    client,
+    document,
+    vector_index,
+):
+    document.status = DocumentStatus.READY
+
+    vector_index.status = VectorIndexStatus.READY
+
+    response = client.post(
+        f"/documents/{document.id}/index/{vector_index.id}",
+        headers=organization_headers(document),
+    )
+
+    assert response.status_code == 409
+
+    data = response.json()
+
+    assert data["detail"] == (
+        "Vector index must be in BUILDING state "
+        "for indexing, but is ready"
+    )
+
+    assert vector_index.status == VectorIndexStatus.READY
+
+
+@pytest.mark.parametrize(
+    "index_status",
+    [
+        VectorIndexStatus.ACTIVE,
+        VectorIndexStatus.FAILED,
+        VectorIndexStatus.DEPRECATED,
+    ],
+)
+def test_index_document_rejects_non_building_index(
+    client,
+    document,
+    vector_index,
+    index_status,
+):
+    document.status = DocumentStatus.READY
+
+    vector_index.status = index_status
+
+    response = client.post(
+        f"/documents/{document.id}/index/{vector_index.id}",
+        headers=organization_headers(document),
+    )
+
+    assert response.status_code == 409
+
+    data = response.json()
+
+    assert data["detail"] == (
+        "Vector index must be in BUILDING state "
+        f"for indexing, but is {index_status.value}"
+    )
+
+    assert vector_index.status == index_status
+
+
+def test_index_document_failure_marks_index_failed(
+    client,
+    document,
+    vector_index,
+):
+    document.status = DocumentStatus.READY
+
+    document.indexing_service.error = RuntimeError(
+        "Embedding provider failed",
+    )
+
+    response = client.post(
+        f"/documents/{document.id}/index/{vector_index.id}",
+        headers=organization_headers(document),
+    )
+
+    assert response.status_code == 500
+
+    assert vector_index.status == VectorIndexStatus.FAILED
+
+    assert document.vector_index_service.mark_ready_calls == []
+
+    assert document.vector_index_service.mark_failed_calls == [
+        (
+            vector_index.id,
+            vector_index.organization_id,
+        )
+    ]
+
+
+def test_index_document_success_does_not_mark_failed(
+    client,
+    document,
+    vector_index,
+):
+    document.status = DocumentStatus.READY
+
+    response = client.post(
+        f"/documents/{document.id}/index/{vector_index.id}",
+        headers=organization_headers(document),
+    )
+
+    assert response.status_code == 200
+
+    assert vector_index.status == VectorIndexStatus.READY
+
+    assert document.vector_index_service.mark_ready_calls == [
+        (
+            vector_index.id,
+            vector_index.organization_id,
+        )
+    ]
+
+    assert document.vector_index_service.mark_failed_calls == []
+
+
+def test_index_document_does_not_mark_failed_when_mark_ready_fails(
+    client,
+    document,
+    vector_index,
+):
+    document.status = DocumentStatus.READY
+
+    document.vector_index_service.mark_ready_error = RuntimeError(
+        "Database failure while marking index ready",
+    )
+
+    response = client.post(
+        f"/documents/{document.id}/index/{vector_index.id}",
+        headers=organization_headers(document),
+    )
+
+    assert response.status_code == 500
+
+    assert vector_index.status == VectorIndexStatus.BUILDING
+
+    assert document.vector_index_service.mark_ready_calls == [
+        (
+            vector_index.id,
+            vector_index.organization_id,
+        )
+    ]
+
+    assert document.vector_index_service.mark_failed_calls == []
