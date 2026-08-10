@@ -19,7 +19,7 @@ class Settings(BaseSettings):
         default="http://localhost:6333",
         alias="QDRANT_URL",
     )
-    
+
     qdrant_api_key: str | None = Field(
         default=None,
         alias="QDRANT_API_KEY",

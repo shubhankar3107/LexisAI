@@ -57,5 +57,3 @@ def test_get_rag_orchestrator_builds_complete_graph():
     )
 
     assert orchestrator._llm_service is llm_service
-
-

@@ -138,7 +138,7 @@ class VectorIndexRepository:
         vector_index.status = VectorIndexStatus.ACTIVE
 
         return vector_index
-    
+
     def mark_deprecated(
         self,
         vector_index: VectorIndex,
